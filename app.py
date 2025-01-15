@@ -50,6 +50,7 @@ filtered_data = data[fixed_assets]
 def calculate_monthly_returns(data):
     monthly_returns = data.pct_change()
     monthly_returns.fillna(0, inplace = True)
+    #print(monthly_returns)
     return monthly_returns
 
 # Calculate cumulative annualized returns
@@ -70,10 +71,9 @@ def calculate_cumulative_annualized_returns(data):
 
 # Function to calculate portfolio returns based on user-defined allocations
 def calculate_portfolio_returns(data, allocations):
-    weights = np.array([allocations[asset] / 100 for asset in fixed_assets])
-    portfolio_returns = data.mul(weights, axis=1).sum(axis=1)
-    print(portfolio_returns)
-    return portfolio_returns
+    portfolio_returns = data.mul(allocations, axis=1).sum(axis=1)
+    portfolio_monthly_returns = portfolio_returns.pct_change().fillna(0)
+    return portfolio_monthly_returns
 
 # Function to calculate volatility
 def calculate_yearly_volatility(data):
@@ -203,18 +203,20 @@ for i, asset in enumerate(fixed_assets):
 # Button to generate/update graphs
 # Button to generate/update graphs
 if st.button("Generate/Update Graphs", disabled=generate_button_disabled):
-    weights = np.array([allocations[asset] / 100 for asset in fixed_assets])
+    #weights = np.array([allocations[asset] / 100 for asset in fixed_assets])
 
     # Calculate daily and cumulative annualized returns
     monthly_returns = calculate_monthly_returns(filtered_data)
 
     # Calculate portfolio monthly returns
-    portfolio_returns = calculate_portfolio_returns(monthly_returns, allocations)
-    portfolio_data = pd.DataFrame({"Portfolio": portfolio_returns}, index=monthly_returns.index)
-
+    portfolio_returns = calculate_portfolio_returns(filtered_data, allocations)
+    portfolio_df = portfolio_returns.to_frame("Portfolio")
+    
     # Calculate cumulative annualized returns for all assets
     cumulative_returns = calculate_cumulative_annualized_returns(monthly_returns)
-    portfolio_cumulative_returns = calculate_cumulative_annualized_returns(portfolio_data)
+    portfolio_cumulative_returns = calculate_cumulative_annualized_returns(portfolio_df)
+
+    #st.write(portfolio_cumulative_returns)
 
     # Plot cumulative annualized returns for all selected assets and portfolio on a single graph
     st.subheader("Cumulative Annualized Returns")
@@ -232,7 +234,7 @@ if st.button("Generate/Update Graphs", disabled=generate_button_disabled):
 
     # Calculate yearly volatility for the selected year range and selected assets
     yearly_volatility = calculate_yearly_volatility(monthly_returns)
-    portfolio_yearly_volatility = calculate_yearly_volatility(portfolio_data)
+    portfolio_yearly_volatility = calculate_yearly_volatility(portfolio_df)
 
     # Plot yearly volatility for all selected assets and portfolio
     st.subheader("Yearly Volatility")
@@ -253,7 +255,7 @@ if st.button("Generate/Update Graphs", disabled=generate_button_disabled):
     
     # Calculate yearly Sharpe Ratio for the selected year range and selected assets
     yearly_sharpe_ratio = calculate_yearly_sharpe_ratio(monthly_returns, t_bill_data)
-    portfolio_yearly_sharpe_ratio = calculate_yearly_sharpe_ratio(portfolio_data, t_bill_data)
+    portfolio_yearly_sharpe_ratio = calculate_yearly_sharpe_ratio(portfolio_df, t_bill_data)
 
     # Plot yearly Sharpe Ratio for all selected assets and portfolio
     st.subheader("Yearly Sharpe Ratio")
