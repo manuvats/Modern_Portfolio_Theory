@@ -1,19 +1,15 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 from datetime import date
+from helper import *
+from metrics import *
 
 # Set Streamlit page configuration
 st.set_page_config(layout="wide", page_title="Portfolio Optimization Application")
-
-# Load the data directly from a fixed backend file
-@st.cache_data
-def load_data():
-    file_path = "Returns_Data.xlsx"  # Path to your fixed backend file
-    data = pd.read_excel(file_path, sheet_name=0, parse_dates=['Date'], index_col='Date')
-    data.fillna(0, inplace=True)
-    return data
 
 # Load the data
 data = load_data()
@@ -46,62 +42,7 @@ fixed_assets = list(asset_labels.keys())
 # Filter data to include only the fixed asset classes
 filtered_data = data[fixed_assets]
 
-# Calculate monthly returns in percentage
-def calculate_monthly_returns(data):
-    monthly_returns = data.pct_change()
-    monthly_returns.fillna(0, inplace=True)
-    return monthly_returns
-
-# Function to calculate portfolio returns based on user-defined allocations
-def calculate_portfolio_returns(data, allocations):
-    portfolio_returns = data.mul(allocations, axis=1).sum(axis=1)
-    portfolio_monthly_returns = portfolio_returns.pct_change().fillna(0)
-    return portfolio_monthly_returns
-
-def calculate_cumulative_returns(data):
-    cumulative_returns = (1 + data).cumprod() - 1
-    return cumulative_returns
-
-#def calculate_volatility(data):
-#    return data.std() * np.sqrt(12)
-
-# Function to calculate yearly volatility
-def calculate_yearly_volatility(data):
-    # Resample to yearly data and calculate volatility
-    yearly_volatility = data.resample('YE').std() * np.sqrt(12)
-    return yearly_volatility
-
-#def calculate_yearly_sharpe_ratio(data, risk_free_rate):
-
-    # Align the risk-free rate with the data index
-    #risk_free_rate = risk_free_rate.reindex(data.index, method='ffill')
-    #excess_returns = data.sub(risk_free_rate, axis=0)
-    #sharpe_ratio = excess_returns.mean() / excess_returns.std() * np.sqrt(12)
-    #return sharpe_ratio
-
-# Function to calculate yearly Sharpe Ratio
-def calculate_yearly_sharpe_ratio(data, risk_free_rate):
-
-    # Align the risk-free rate with the data index
-    risk_free_rate = risk_free_rate.reindex(data.index, method='ffill')
-
-    # Calculate excess returns
-    excess_returns = data.sub(risk_free_rate, axis=0)
-
-    # Calculate yearly average returns and standard deviation
-    yearly_avg_returns = excess_returns.resample('YE').mean()
-    yearly_std_dev = excess_returns.resample('YE').std()
-
-    # Compute Sharpe Ratio
-    yearly_sharpe_ratio = (yearly_avg_returns / yearly_std_dev) * np.sqrt(12)
-    #print(risk_free_rate)
-
-    return yearly_sharpe_ratio
-
-def calculate_drawdowns(cumulative_returns):
-    cumulative_max = cumulative_returns.cummax()
-    drawdowns = (cumulative_returns / cumulative_max) - 1
-    return drawdowns
+asset_date_ranges = get_asset_date_ranges(data)
 
 # Streamlit UI
 st.title("Portfolio Optimization Application")
@@ -110,55 +51,124 @@ st.title("Portfolio Optimization Application")
 min_date = data.index.min().date()
 max_date = data.index.max().date()
 
+# Date range selection with slider
+st.write("### Select Date Range")
+
+# Place both date pickers in the same row
+col1, col2 = st.columns([1, 1])  # Adjust the proportions to control the width of the columns
+
 # Use datetime.date in the slider
-date_range = st.slider(
-    "Select Date Range",
-    min_value=min_date,
-    max_value=max_date,
-    value=(min_date, max_date),
-    format="YYYY-MM-DD"
-)
+#date_range_slider = st.slider(
+#    "Select Date Range",
+#    min_value=min_date,
+#    max_value=max_date,
+#    value=(min_date, max_date),
+#    format="YYYY-MM-DD",
+#    key="slider_date_range"
+#)
 
-def filter_data_by_date(df, start_date, end_date):
-    start_date = pd.Timestamp(start_date)
-    end_date = pd.Timestamp(end_date)
-    mask = (df.index >= start_date) & (df.index <= end_date)
-    return df.loc[mask]
+with col1:
+    start_date = st.date_input(
+        "Start Date",
+        value=min_date,
+        min_value=min_date,
+        max_value=max_date,
+        key="start_date_picker"
+    )
 
-# Filter data for the selected date range
-filtered_data = filter_data_by_date(filtered_data, date_range[0], date_range[1])
+with col2:
+    end_date = st.date_input(
+        "End Date",
+        value=max_date,
+        min_value=min_date,
+        max_value=max_date,
+        key="end_date_picker"
+    )
+
+if start_date > end_date:
+    st.error("Start date must be before or equal to the end date.")
+else:
+    # Filter data for the selected date range
+    filtered_data = filter_data_by_date(data, start_date, end_date)
+
+non_gold_assets = [asset for asset in fixed_assets if asset != "GOLDLNPM Index"]
 
 # User-defined allocations
 st.header("Portfolio % Allocation")
 
-allocations = {}
-initial_allocation = 100 / len(fixed_assets)
-non_gold_assets = [asset for asset in fixed_assets if asset != "GOLDLNPM Index"]
+# After loading data and getting date ranges, before allocation section:
+def get_available_assets(asset_date_ranges, start_date, end_date):
+    available_assets = []
+    for asset in fixed_assets:
+        if asset in asset_date_ranges:
+            asset_dates = asset_date_ranges[asset]
+            if start_date >= asset_dates['start'] and end_date <= asset_dates['end']:
+                available_assets.append(asset)
+    #st.write("Available assets:", available_assets)
+    return available_assets
 
-cols = st.columns(6)
-total_alloc = 0
+# Add debugging print statements
+
+#st.write("Asset date ranges:", asset_date_ranges)
+#st.write("Gold date range:", asset_date_ranges.get("XAU Curncy", None))
+
+allocations = {}
+cols = st.columns(4)
+total_alloc = 0.0
+
+# Set default allocation to distribute 100% among non-gold assets
+# Calculate initial allocation
+available_assets = get_available_assets(asset_date_ranges, start_date, end_date)
+initial_allocation = 100.0 / (len(available_assets) - 1) if available_assets else 0.0
+#-1 to exclude Gold in the initial allocation
+
 for i, asset in enumerate(non_gold_assets):
-    col = cols[i % 6]
-    input_value = col.number_input(
-        f"{asset_labels[asset]}",
-        min_value=0,
-        max_value=100,
-        value=int(initial_allocation),
-        step=1,
-        key=f"{asset}_input"
-    )
-    allocations[asset] = input_value
-    total_alloc += input_value
+    col = cols[i % 4]
+
+    # Check if asset has data in selected date range
+    asset_in_range = True
+    date_range_text = ""
+    if asset in asset_date_ranges:
+        asset_dates = asset_date_ranges[asset]
+        date_range_text = f"({asset_dates['start']} to {asset_dates['end']})"
+        asset_in_range = (
+            start_date >= asset_dates['start'] and 
+            end_date <= asset_dates['end']
+        )
+    
+    if asset_in_range:
+        input_value = col.number_input(
+            f"{asset_labels[asset]}\n{date_range_text}",
+            min_value=0.0,
+            max_value=100.0,
+            value=initial_allocation,
+            step=0.01,
+            key=f"{asset}_input"
+        )
+        allocations[asset] = input_value
+        total_alloc += input_value
+    else:
+        col.text_input(
+            f"{asset_labels[asset]}\n{date_range_text}",
+            value="Data not available",
+            disabled=True,
+            key=f"{asset}_input_disabled"
+        )
+        allocations[asset] = 0.0
+
+    #total_alloc += input_value
+    
+total_alloc = round(total_alloc, 2)
 
 # Automatically calculate GOLDLNPM Index allocation
-gold_alloc = max(0, 100 - total_alloc)
+gold_alloc = round(max(0.0, 100.0 - total_alloc), 2)
 allocations["GOLDLNPM Index"] = gold_alloc
 
 # Display GOLDLNPM Index allocation
 st.write(f"### {asset_labels['GOLDLNPM Index']} Allocation: {gold_alloc}%")
 
 # Display total allocation prominently
-if total_alloc > 100:
+if total_alloc > 100.0:
     st.error("Total allocation exceeds 100%. Please correct the inputs.")
     generate_button_disabled = True
 else:
@@ -169,21 +179,68 @@ else:
     )
 
 # Checkbox for each asset class
-st.subheader("Select Asset Classes to Display Graphs")
-selected_assets = []
-select_all = st.checkbox("Select All", value=True, key="select_all_checkbox")
+#st.subheader("Select Asset Classes to Display Graphs")
+#selected_assets = []
+#select_all = st.checkbox("Select All", value=True, key="select_all_checkbox")
+
+# Modify the checkbox section:
+#selected_assets = {}
+#cols = st.columns(6)
+#for i, asset in enumerate(non_gold_assets):
+#    col = cols[i % 6]
+#    asset_in_range = asset in available_assets
+    
+#    if asset_in_range:
+#        selected_assets[asset] = col.checkbox(
+#            f"Select {asset_labels[asset]}",
+#            #value=True,
+#            key=f"alloc_{asset}_checkbox"
+#        )
+#    else:
+#        selected_assets[asset] = col.checkbox(
+#            f"Select {asset_labels[asset]}",
+#            #value=False,
+#            disabled=True,
+#            key=f"alloc_{asset}_checkbox"
+#        )
+
+# Section for graph selection
+st.subheader("Select Assets to Display in Graphs")
+select_all = st.checkbox("Select All", value=True, key="graph_select_all")
+selected_graph_assets = []
 
 cols = st.columns(4)
+
 for i, asset in enumerate(fixed_assets):
     col = cols[i % 4]
-    if col.checkbox(f"{asset_labels[asset]}", value=select_all, key=f"{asset}_checkbox"):
-        selected_assets.append(asset)
+    
+    asset_in_range = asset in available_assets
+
+    if asset_in_range:
+        if col.checkbox(
+            f"{asset_labels[asset]}", 
+            value=select_all, 
+            key=f"graph_{asset}_checkbox"
+            ):
+            selected_graph_assets.append(asset)
+    else:
+        col.checkbox(
+            f"{asset_labels[asset]}", 
+            value=False,
+            disabled=True,
+            key=f"graph_{asset}_checkbox"
+        )
 
 if st.button("Generate/Update Graphs", disabled=generate_button_disabled):
-    monthly_returns = calculate_monthly_returns(filtered_data)
-    cumulative_returns = calculate_cumulative_returns(monthly_returns)
+    # Calculate returns only for available and selected assets
+    available_selected_assets = [asset for asset in selected_graph_assets if asset in available_assets]
+    
+    if available_selected_assets:
+        monthly_returns = calculate_monthly_returns(filtered_data[available_selected_assets])
+        cumulative_returns = calculate_cumulative_returns(monthly_returns)
+        
 
-    # Calculate portfolio monthly returns
+    # Calculate portfolio returns using all allocation assets
     portfolio_returns = calculate_portfolio_returns(filtered_data, allocations)
     portfolio_df = portfolio_returns.to_frame("Portfolio")
 
@@ -191,81 +248,88 @@ if st.button("Generate/Update Graphs", disabled=generate_button_disabled):
     cumulative_portfolio_returns = calculate_cumulative_returns(portfolio_df)
 
     st.subheader("Cumulative Returns")
-    plt.figure(figsize=(14, 8))
-    for asset in selected_assets:
-        plt.plot(cumulative_returns.index, cumulative_returns[asset], label=asset_labels[asset])
-    plt.plot(cumulative_portfolio_returns.index, cumulative_portfolio_returns["Portfolio"], label="Portfolio", color="black", linestyle="--")
-    plt.xticks(rotation=45)
-    plt.xlabel("Date")
-    plt.ylabel("Cumulative Return (%)")
-    plt.title("Cumulative Returns of Selected Assets")
-    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    plt.grid(True)
-    st.pyplot(plt)
+    # Create figure
+    fig = go.Figure()
 
-    # Volatility
-    #volatility = calculate_yearly_volatility(monthly_returns)
-    #st.write(cumulative_returns.index)
-    #st.write(volatility)
-    #st.write(volatility[selected_assets])
-    #asset_labels[selected_assets]
+    # Base trace settings
+    base_trace = dict(
+        mode='lines',
+        hovertemplate='<b>%{customdata}</b><br>Date: %{x}<br>Return: %{y:.2f}x<br><extra></extra>'
+    )
+
+    # Add asset traces
+    for asset in available_selected_assets:
+        if asset in cumulative_returns.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=cumulative_returns.index,
+                    y=cumulative_returns[asset],
+                    name=asset_labels[asset],
+                    customdata=[asset_labels[asset]]*len(cumulative_returns),
+                    line=dict(width=2),
+                    **base_trace
+                )
+            )
+
+    # Add portfolio trace
+    fig.add_trace(
+        go.Scatter(
+            x=cumulative_portfolio_returns.index,
+            y=cumulative_portfolio_returns["Portfolio"],
+            name="Portfolio",
+            line=dict(color='black', dash='dash', width=2),
+            **base_trace
+        )
+    )
+
+    # Layout configuration
+    fig.update_layout(
+        height=900,
+        hovermode='closest',
+        hoverdistance=100,
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.4,
+            xanchor="center",
+            x=0.5,
+            font=dict(size=10),
+            itemsizing='constant'
+        ),
+        xaxis=dict(
+            type='date',
+            tickformat='%b %Y',
+            rangeselector=dict(
+                buttons=list([
+                    dict(count=1, label="1m", step="month", stepmode="backward"),
+                    dict(count=6, label="6m", step="month", stepmode="backward"),
+                    dict(count=1, label="1y", step="year", stepmode="backward"),
+                    dict(count=2, label="2y", step="year", stepmode="backward"),
+                    dict(count=5, label="5y", step="year", stepmode="backward"),
+                    dict(count=10, label="10y", step="year", stepmode="backward"),
+                    dict(step="all", label="All")
+                ])
+            ),
+            rangeslider=dict(visible=True),
+            tickangle=45,
+            autorange=True,
+            gridcolor='lightgrey',
+            showgrid=True
+        ),
+        yaxis=dict(
+            tickformat='.2f',
+            gridcolor='lightgrey',
+            title="Cumulative Return (times)",
+            autorange=True
+        ),
+        plot_bgcolor='white',
+        margin=dict(b=100)
+    )
+
+    # Display chart with config
+    st.plotly_chart(fig, use_container_width=True, config={
+        'scrollZoom': True,
+        'displayModeBar': True,
+        'modeBarButtonsToAdd': ['drawopenpath', 'eraseshape']
+    })
     
-    # Calculate yearly volatility for the selected year range and selected assets
-    yearly_volatility = calculate_yearly_volatility(monthly_returns)
-    portfolio_yearly_volatility = calculate_yearly_volatility(portfolio_df)
-
-    st.subheader("Yearly Volatility")
-    plt.figure(figsize=(14, 8))
-    for asset in selected_assets:
-        plt.plot(yearly_volatility.index, yearly_volatility[asset], label=asset_labels[asset])
-    plt.plot(portfolio_yearly_volatility.index.year, portfolio_yearly_volatility["Portfolio"], label="Portfolio", linewidth=2, linestyle='--')
-    plt.xticks(rotation=45)
-    plt.xlabel("Date")
-    plt.ylabel("Volatility (%)")
-    plt.title("Yearly Volatility of Selected Assets")
-    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    plt.grid(True)
-    st.pyplot(plt)
-
-    # Sharpe Ratio
-    #risk_free_rate = monthly_returns["LD12TRUU Index"]  # Example risk-free rate
-    #sharpe_ratio = calculate_yearly_sharpe_ratio(monthly_returns, risk_free_rate)
-    
-    # Extract T-bill data for Sharpe Ratio
-    t_bill_data = monthly_returns["LD12TRUU Index"]
-
-    # Calculate yearly Sharpe Ratio for the selected year range and selected assets
-    yearly_sharpe_ratio = calculate_yearly_sharpe_ratio(monthly_returns, t_bill_data)
-    portfolio_yearly_sharpe_ratio = calculate_yearly_sharpe_ratio(portfolio_df, t_bill_data)
-
-    st.subheader("Yearly Sharpe Ratio")
-    plt.figure(figsize=(14, 8))
-    for asset in selected_assets:
-        plt.plot(yearly_sharpe_ratio.index, yearly_sharpe_ratio[asset], label=asset_labels[asset])
-    plt.plot(portfolio_yearly_sharpe_ratio.index.year, portfolio_yearly_sharpe_ratio["Portfolio"], label="Portfolio", linewidth=2, linestyle='--')
-    plt.xticks(rotation=45)
-    plt.xlabel("Date")
-    plt.ylabel("Sharpe Ratio")
-    plt.title("Yearly Sharpe Ratio of Selected Assets")
-    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    plt.grid(True)
-    st.pyplot(plt)
-
-    # Drawdowns
-    #drawdowns = calculate_drawdowns(cumulative_returns)
-    # Calculate drawdowns
-    asset_drawdowns = calculate_drawdowns(cumulative_returns)
-    portfolio_drawdowns = calculate_drawdowns(cumulative_portfolio_returns)
-
-    st.subheader("Drawdowns")
-    plt.figure(figsize=(14, 8))
-    for asset in selected_assets:
-        plt.plot(asset_drawdowns.index, asset_drawdowns[asset], label=asset_labels[asset])
-    plt.plot(portfolio_drawdowns.index.year, portfolio_drawdowns["Portfolio"], label="Portfolio", linewidth=2, linestyle='--')
-    plt.xticks(rotation=45)
-    plt.xlabel("Date")
-    plt.ylabel("Drawdown (%)")
-    plt.title("Drawdowns of Selected Assets")
-    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    plt.grid(True)
-    st.pyplot(plt)
