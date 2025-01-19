@@ -5,3 +5,4 @@
 /table_generation.txt
 *.ipynb
 /mptvenv
+/__pycache__
