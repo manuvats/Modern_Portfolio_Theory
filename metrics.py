@@ -1,3 +1,5 @@
+import numpy as np
+import pandas as pd
 # Calculate monthly returns in percentage
 def calculate_monthly_returns(data):
     monthly_returns = data.pct_change()
@@ -18,39 +20,62 @@ def calculate_cumulative_returns(data):
 #    return data.std() * np.sqrt(12)
 
 # Function to calculate yearly volatility
-def calculate_yearly_volatility(data):
-    # Resample to yearly data and calculate volatility
-    yearly_volatility = data.resample('YE').std() * np.sqrt(12)
-    return yearly_volatility
+def calculate_volatility(data):
+    return data.std() * np.sqrt(12)
 
-#def calculate_yearly_sharpe_ratio(data, risk_free_rate):
-
-    # Align the risk-free rate with the data index
-    #risk_free_rate = risk_free_rate.reindex(data.index, method='ffill')
-    #excess_returns = data.sub(risk_free_rate, axis=0)
-    #sharpe_ratio = excess_returns.mean() / excess_returns.std() * np.sqrt(12)
-    #return sharpe_ratio
-
-# Function to calculate yearly Sharpe Ratio
-def calculate_yearly_sharpe_ratio(data, risk_free_rate):
-
-    # Align the risk-free rate with the data index
+# Function to calculate Sharpe Ratio
+def calculate_sharpe_ratio(data, risk_free_rate):
+    """Calculate Sharpe ratio"""
+    # Ensure risk-free rate is aligned with data
     risk_free_rate = risk_free_rate.reindex(data.index, method='ffill')
-
+    
     # Calculate excess returns
     excess_returns = data.sub(risk_free_rate, axis=0)
-
-    # Calculate yearly average returns and standard deviation
-    yearly_avg_returns = excess_returns.resample('YE').mean()
-    yearly_std_dev = excess_returns.resample('YE').std()
-
-    # Compute Sharpe Ratio
-    yearly_sharpe_ratio = (yearly_avg_returns / yearly_std_dev) * np.sqrt(12)
-    #print(risk_free_rate)
-
-    return yearly_sharpe_ratio
+    
+    # Calculate annualized Sharpe ratio
+    return np.sqrt(12) * (excess_returns.mean() / excess_returns.std())
 
 def calculate_drawdowns(cumulative_returns):
     cumulative_max = cumulative_returns.cummax()
     drawdowns = (cumulative_returns / cumulative_max) - 1
     return drawdowns
+
+'''def calculate_max_drawdown_info(cumulative_returns):
+    """Calculate maximum drawdown and its timing"""
+    drawdowns = calculate_drawdowns(cumulative_returns)
+    max_drawdown = drawdowns.min()
+    max_drawdown_idx = drawdowns.idxmin()
+    
+    max_drawdown_info = {
+        'max_drawdown': max_drawdown,
+        'date': max_drawdown_idx,
+        'year': max_drawdown_idx.year,
+        'month': max_drawdown_idx.month
+    }
+    
+    return max_drawdown_info'''
+
+def calculate_max_drawdown_info(returns):
+    """Calculate maximum drawdown and its timing"""
+    drawdowns = calculate_drawdowns(returns)
+    
+    if isinstance(returns, pd.Series):
+        max_drawdown = drawdowns.min()
+        max_drawdown_idx = drawdowns.idxmin()
+        
+        max_drawdown_info = {
+            'max_drawdown': max_drawdown,
+            'date': max_drawdown_idx,
+            'year': max_drawdown_idx.year if hasattr(max_drawdown_idx, 'year') else None,
+            'month': max_drawdown_idx.month if hasattr(max_drawdown_idx, 'month') else None
+        }
+    else:
+        max_drawdown = drawdowns.min()
+        max_drawdown_info = {
+            'max_drawdown': max_drawdown,
+            'date': None,
+            'year': None,
+            'month': None
+        }
+    
+    return max_drawdown_info

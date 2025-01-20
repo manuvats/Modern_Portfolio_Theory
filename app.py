@@ -1,9 +1,6 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-import matplotlib.pyplot as plt
 from datetime import date
 from helper import *
 from metrics import *
@@ -232,20 +229,29 @@ for i, asset in enumerate(fixed_assets):
         )
 
 if st.button("Generate/Update Graphs", disabled=generate_button_disabled):
+    
+    monthly_returns = calculate_monthly_returns(filtered_data)
+    cumulative_returns = calculate_cumulative_returns(monthly_returns)
+    filtered_returns = calculate_monthly_returns(filtered_data)
+    portfolio_returns = calculate_portfolio_returns(filtered_data, allocations)
+    portfolio_df = portfolio_returns.to_frame("Portfolio")
+    cumulative_portfolio_returns = calculate_cumulative_returns(portfolio_df)
+
+    
     # Calculate returns only for available and selected assets
     available_selected_assets = [asset for asset in selected_graph_assets if asset in available_assets]
     
-    if available_selected_assets:
-        monthly_returns = calculate_monthly_returns(filtered_data[available_selected_assets])
-        cumulative_returns = calculate_cumulative_returns(monthly_returns)
+    #if available_selected_assets:
+    #    monthly_returns = calculate_monthly_returns(filtered_data[available_selected_assets])
+    #    cumulative_returns = calculate_cumulative_returns(monthly_returns)
         
 
     # Calculate portfolio returns using all allocation assets
-    portfolio_returns = calculate_portfolio_returns(filtered_data, allocations)
-    portfolio_df = portfolio_returns.to_frame("Portfolio")
+    #portfolio_returns = calculate_portfolio_returns(filtered_data, allocations)
+    #portfolio_df = portfolio_returns.to_frame("Portfolio")
 
     #portfolio_returns = pd.DataFrame({"Portfolio": np.dot(monthly_returns[selected_assets], [allocations[a] / 100 for a in selected_assets])})
-    cumulative_portfolio_returns = calculate_cumulative_returns(portfolio_df)
+    #cumulative_portfolio_returns = calculate_cumulative_returns(portfolio_df)
 
     st.subheader("Cumulative Returns")
     # Create figure
@@ -258,8 +264,10 @@ if st.button("Generate/Update Graphs", disabled=generate_button_disabled):
     )
 
     # Add asset traces
-    for asset in available_selected_assets:
-        if asset in cumulative_returns.columns:
+    if available_selected_assets:
+        selected_cumulative_returns = cumulative_returns[available_selected_assets]
+        for asset in available_selected_assets:
+            #if asset in cumulative_returns.columns:
             fig.add_trace(
                 go.Scatter(
                     x=cumulative_returns.index,
@@ -332,4 +340,129 @@ if st.button("Generate/Update Graphs", disabled=generate_button_disabled):
         'displayModeBar': True,
         'modeBarButtonsToAdd': ['drawopenpath', 'eraseshape']
     })
+
     
+    #filtered_returns = calculate_monthly_returns(filtered_data)
+    #portfolio_returns = calculate_portfolio_returns(filtered_data, allocations)
+
+    #Volatility, Sharpe Ratio and Drawdowns
+    risk_free_rate = monthly_returns["LD12TRUU Index"]
+
+    # Initialize lists for metrics and labels
+    volatilities = []
+    sharpe_ratios = []
+    max_drawdowns = []
+    labels = []
+
+    # Calculate metrics for each asset
+    for asset in fixed_assets:
+        if asset in filtered_data.columns and not filtered_data[asset].isna().all():
+            cumul_returns = cumulative_returns[asset]
+            labels.append(asset_labels[asset])
+            volatilities.append(calculate_volatility(filtered_returns[asset]))
+            sharpe_ratios.append(calculate_sharpe_ratio(filtered_returns[asset], risk_free_rate))
+            max_drawdowns.append(calculate_max_drawdown_info(cumul_returns)['max_drawdown'])
+
+    # Add portfolio metrics
+    labels.append('Portfolio')
+    volatilities.append(calculate_volatility(portfolio_returns))
+    sharpe_ratios.append(calculate_sharpe_ratio(portfolio_returns, risk_free_rate))
+    max_drawdowns.append(calculate_max_drawdown_info(cumulative_portfolio_returns)['max_drawdown'])
+
+    
+    # Volatility plot
+    st.write("### Volatility")
+    max_vol = max(volatilities) * 1.15  # Add 10% padding
+    fig_vol = go.Figure()
+    fig_vol.add_trace(go.Bar(
+        x=labels,
+        y=volatilities,
+        hovertemplate='Asset: %{x}<br>Volatility: %{y:.2%}<extra></extra>'
+    ))
+    fig_vol.update_layout(
+        height=700,
+        yaxis=dict(
+            tickformat='.1%', 
+            title="Annualized Volatility",
+            range=[0, max_vol]  # Set range with padding
+            ),
+        xaxis_tickangle=45,
+        showlegend=False
+    )
+    st.plotly_chart(fig_vol, use_container_width=True)
+
+    # Sharpe Ratio plot
+    st.write("### Sharpe Ratio")
+
+    max_sharpe = max(max(sharpe_ratios) * 1.15, 0)  # Add 10% padding
+    min_sharpe = min(min(sharpe_ratios) * 1.15, 0)
+
+    fig_sharpe = go.Figure()
+    fig_sharpe.add_trace(go.Bar(
+        x=labels,
+        y=sharpe_ratios,
+        hovertemplate='Asset: %{x}<br>Sharpe Ratio: %{y:.2f}<extra></extra>'
+    ))
+    fig_sharpe.update_layout(
+        height=700,
+        yaxis=dict(
+            title="Sharpe Ratio",
+            range=[min_sharpe, max_sharpe]  # Set range with padding
+            ),
+        xaxis_tickangle=45,
+        showlegend=False
+    )
+    st.plotly_chart(fig_sharpe, use_container_width=True)
+
+    # Max Drawdown plot
+    st.write("### Maximum Drawdown")
+
+    # Debug max_drawdowns content
+    numeric_drawdowns = []
+    drawdown_dates = []
+
+    #max_dd = np.min(np.array(max_drawdowns, dtype=float)) * 1.1
+    #drawdown_dates = []  
+
+    # Get drawdown dates for annotations
+    for asset in fixed_assets:
+        if asset in filtered_data.columns and not filtered_data[asset].isna().all():
+            dd_info = calculate_max_drawdown_info(cumulative_returns[asset])
+            numeric_drawdowns.append(float(dd_info['max_drawdown']))
+            if dd_info['date'] is not None:
+                drawdown_dates.append(f"{dd_info['date'].strftime('%b %Y')}")
+            else:
+                drawdown_dates.append("N/A")
+    
+    # Add portfolio drawdown date
+    dd_info = calculate_max_drawdown_info(cumulative_portfolio_returns['Portfolio'])
+    numeric_drawdowns.append(float(dd_info['max_drawdown']))
+    if dd_info['date'] is not None:
+        drawdown_dates.append(f"{dd_info['date'].strftime('%b %Y')}")
+    else:
+        drawdown_dates.append("N/A")
+
+    # Calculate max drawdown with padding using numeric values
+    min_dd = min(np.min(numeric_drawdowns) * 1.1, 0)
+    max_dd = max(np.max(numeric_drawdowns) * 1.1, 0)
+    
+    fig_dd = go.Figure()
+    fig_dd.add_trace(go.Bar(
+        x=labels,
+        y=max_drawdowns,
+        text=drawdown_dates,
+        textposition='outside',
+        hovertemplate='Asset: %{x}<br>Max Drawdown: %{y:.2%}<br>Date: %{text}<extra></extra>'
+    ))
+    
+    fig_dd.update_layout(
+        height=700,
+        yaxis=dict(
+            tickformat='.1%', 
+            title="Maximum Drawdown",
+            range=[min_dd, max_dd]  # Reverse range for drawdowns
+            ),
+        xaxis_tickangle=45,
+        showlegend=False
+    )
+    st.plotly_chart(fig_dd, use_container_width=True)
